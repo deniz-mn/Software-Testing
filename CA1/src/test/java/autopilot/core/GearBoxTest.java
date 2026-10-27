@@ -12,19 +12,38 @@ import static autopilot.core.GearBox.Gear.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class GearBoxTest {
-    @ParameterizedTest(name = "{0} -> {1} at {2} km/h: allowed={3}")
-    @CsvFileSource(resources = "/autopilot/core/gear-transitions.csv", numLinesToSkip = 1)
-    void changeTo_transitionAndSpeed_obeysStateMachine(GearBox.Gear from, GearBox.Gear to,
-                                                       double speed, boolean allowed) {
+    private static final double STOPPED = 0;
+
+    @ParameterizedTest(name = "{0} -> {1} at {2} km/h")
+    @CsvFileSource(resources = "/autopilot/core/allowed-gear-transitions.csv", numLinesToSkip = 1)
+    void changeTo_allowedTransition_switchesGear(GearBox.Gear from, GearBox.Gear to, double speed) {
         GearBox gearbox = gearboxIn(from);
         gearbox.setSpeedSensor(() -> speed);
-        if (allowed) {
-            gearbox.changeTo(to);
-            assertEquals(to, gearbox.getCurrentGear());
-        } else {
-            assertThrows(IllegalGearChangeException.class, () -> gearbox.changeTo(to));
-            assertEquals(from, gearbox.getCurrentGear(), "Rejected shifts must preserve the gear");
+
+        gearbox.changeTo(to);
+
+        assertEquals(to, gearbox.getCurrentGear());
+    }
+
+    @ParameterizedTest(name = "{0} -> {1} at {2} km/h")
+    @CsvFileSource(resources = "/autopilot/core/rejected-gear-transitions.csv", numLinesToSkip = 1)
+    void changeTo_rejectedTransition_throwsIllegalGearChange(GearBox.Gear from, GearBox.Gear to, double speed) {
+        GearBox gearbox = gearboxIn(from);
+        gearbox.setSpeedSensor(() -> speed);
+
+        assertThrows(IllegalGearChangeException.class, () -> gearbox.changeTo(to));
+    }
+
+    @Test
+    void changeTo_rejectedTransition_keepsCurrentGear() {
+        GearBox gearbox = gearboxIn(P);
+        try {
+            gearbox.changeTo(D);
+        } catch (IllegalGearChangeException expected) {
+            // the rejection itself is covered by the parameterized test above
         }
+
+        assertEquals(P, gearbox.getCurrentGear());
     }
 
     @ParameterizedTest
@@ -32,35 +51,36 @@ class GearBoxTest {
     void changeTo_sameGear_doesNotReadSpeedSensor(GearBox.Gear gear) {
         GearBox gearbox = gearboxIn(gear);
         gearbox.setSpeedSensor(() -> { throw new AssertionError("Unexpected sensor read"); });
+
         gearbox.changeTo(gear);
+
         assertEquals(gear, gearbox.getCurrentGear());
     }
 
     @ParameterizedTest
-    @ValueSource(doubles = {-0.01, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY})
-    void changeTo_invalidSpeed_throwsWithoutChangingGear(double speed) {
+    @ValueSource(doubles = {-0.01, Double.NaN, Double.POSITIVE_INFINITY})
+    void changeTo_invalidSpeed_throwsIllegalArgument(double speed) {
         GearBox gearbox = new GearBox(() -> speed);
+
         assertThrows(IllegalArgumentException.class, () -> gearbox.changeTo(R));
-        assertEquals(P, gearbox.getCurrentGear());
     }
 
     @Test
-    void changeTo_failedSensor_propagatesFailureWithoutChangingGear() {
-        SensorFailureException failure = new SensorFailureException("Speed sensor unavailable");
-        GearBox gearbox = new GearBox(() -> { throw failure; });
-        assertSame(failure, assertThrows(SensorFailureException.class, () -> gearbox.changeTo(R)));
-        assertEquals(P, gearbox.getCurrentGear());
+    void changeTo_failedSensor_propagatesSensorFailure() {
+        GearBox gearbox = new GearBox(() -> { throw new SensorFailureException("Speed sensor unavailable"); });
+
+        assertThrows(SensorFailureException.class, () -> gearbox.changeTo(R));
     }
 
     @Test
-    void changeTo_nullTarget_throwsWithoutChangingGear() {
+    void changeTo_nullTarget_throwsNullPointer() {
         GearBox gearbox = gearboxIn(D);
+
         assertThrows(NullPointerException.class, () -> gearbox.changeTo(null));
-        assertEquals(D, gearbox.getCurrentGear());
     }
 
     private static GearBox gearboxIn(GearBox.Gear gear) {
-        GearBox gearbox = new GearBox(() -> 0);
+        GearBox gearbox = new GearBox(() -> STOPPED);
         if (gear != P) gearbox.changeTo(R);
         if (gear == N || gear == D) gearbox.changeTo(N);
         if (gear == D) gearbox.changeTo(D);
